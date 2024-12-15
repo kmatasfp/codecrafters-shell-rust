@@ -1,8 +1,11 @@
+use core::str;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::{
     env::{self, VarError},
     path::Path,
+    process::{Command, Output, Stdio},
+    string::FromUtf8Error,
 };
 use std::{fs, path::PathBuf};
 
@@ -17,31 +20,37 @@ fn main() -> Result<()> {
         stdin.read_line(&mut input)?;
 
         let trimmed_input = input.trim();
+        let command: Vec<&str> = trimmed_input.split_whitespace().collect();
 
-        let builtin_commands = ["echo", "exit", "type"];
-
-        match trimmed_input {
-            "exit 0" => break,
-            i if trimmed_input.starts_with("echo") => println!("{}", &i[5..]),
-            i => {
-                if i.starts_with("type") {
-                    let command = &i[5..];
-
-                    if builtin_commands.contains(&command) {
-                        println!("{} is a shell builtin", command)
+        match command.as_slice() {
+            ["exit", "0"] => break,
+            ["echo", rest @ ..] => println!("{}", rest.join(" ")),
+            ["type", builtin @ "echo"]
+            | ["type", builtin @ "exit"]
+            | ["type", builtin @ "type"] => {
+                println!("{} is a shell builtin", builtin)
+            }
+            ["type", rest @ ..] => {
+                if let Some(program) = rest.first() {
+                    if let Some(executable) = find_executable_on_path(program)? {
+                        println!("{} is {}", program, executable.display())
                     } else {
-                        let maybe_executable = find_executable_on_path(command)?;
-
-                        if let Some(executable) = maybe_executable {
-                            println!("{} is {}", command, executable.display())
-                        } else {
-                            println!("{}: not found", command)
-                        }
+                        println!("{}: not found", program)
                     }
                 } else {
-                    println!("{}: not found", i)
+                    println!(": not found")
                 }
             }
+            [c, rest @ ..] => {
+                if let Some(program) = find_executable_on_path(c)? {
+                    let output = run_executable_with_args(&program, rest)?;
+
+                    println!("{}", String::from_utf8(output.stdout)?)
+                } else {
+                    println!("{}: not found", c)
+                }
+            }
+            [] => println!(": not found"),
         }
     }
     Ok(())
@@ -58,11 +67,19 @@ fn find_executable_on_path(executable: &str) -> Result<Option<PathBuf>> {
         .find(|path| fs::metadata(path).is_ok()))
 }
 
+fn run_executable_with_args(program: &PathBuf, args: &[&str]) -> io::Result<Output> {
+    Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .output()
+}
+
 pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum Error {
+    EncodingError(FromUtf8Error),
     EnvVarError(VarError),
     Io(std::io::Error),
 }
@@ -76,6 +93,12 @@ impl From<VarError> for Error {
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
+    }
+}
+
+impl From<FromUtf8Error> for Error {
+    fn from(value: FromUtf8Error) -> Self {
+        Self::EncodingError(value)
     }
 }
 
