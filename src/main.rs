@@ -35,7 +35,7 @@ fn main() -> Result<()> {
 
                         let maybe_executable = executables
                             .into_iter()
-                            .find(|executable| executable.starts_with(command));
+                            .find(|executable| executable.ends_with(command));
 
                         if let Some(executable) = maybe_executable {
                             println!("{} is {}", command, executable.display())
