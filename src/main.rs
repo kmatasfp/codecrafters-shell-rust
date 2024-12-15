@@ -2,7 +2,6 @@
 use std::io::{self, Write};
 use std::{
     env::{self, VarError},
-    fs::ReadDir,
     path::Path,
 };
 use std::{fs, path::PathBuf};
