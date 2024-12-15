@@ -11,10 +11,16 @@ fn main() {
         let mut input = String::new();
         stdin.read_line(&mut input).unwrap();
 
-        if input.trim() == "exit 0" {
+        let trimmed_input = input.trim();
+
+        if trimmed_input == "exit 0" {
             break;
         }
 
-        println!("{}: not found", input.trim());
+        if trimmed_input.starts_with("echo") {
+            println!("{}", &trimmed_input[5..])
+        } else {
+            println!("{}: not found", trimmed_input);
+        }
     }
 }
