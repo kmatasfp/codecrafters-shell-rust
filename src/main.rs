@@ -13,14 +13,24 @@ fn main() {
 
         let trimmed_input = input.trim();
 
-        if trimmed_input == "exit 0" {
-            break;
-        }
+        let builtin_commands = ["echo", "exit", "type"];
 
-        if trimmed_input.starts_with("echo") {
-            println!("{}", &trimmed_input[5..])
-        } else {
-            println!("{}: not found", trimmed_input);
+        match trimmed_input {
+            "exit 0" => break,
+            i if trimmed_input.starts_with("echo") => println!("{}", &i[5..]),
+            i => {
+                if i.starts_with("type") {
+                    let command = &i[5..];
+
+                    if builtin_commands.contains(&command) {
+                        println!("{} is a shell builtin", command)
+                    } else {
+                        println!("{}: not found", command)
+                    }
+                } else {
+                    println!("{}: not found", i)
+                }
+            }
         }
     }
 }
