@@ -57,8 +57,6 @@ fn executables_on_path() -> Result<Vec<PathBuf>> {
 
     let value = env::var(path_var)?;
 
-    println!("PATH is {}", value);
-
     let dirs: Vec<&Path> = value.split(":").map(Path::new).collect();
 
     files_in_dirs(dirs).map_err(Error::Io)
