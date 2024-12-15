@@ -45,7 +45,7 @@ fn main() -> Result<()> {
                 if let Some(program) = find_executable_on_path(c)? {
                     let output = run_executable_with_args(&program, rest)?;
 
-                    println!("{}", String::from_utf8(output.stdout)?)
+                    println!("{}", String::from_utf8(output.stdout)?.trim())
                 } else {
                     println!("{}: not found", c)
                 }
