@@ -11,10 +11,10 @@ fn main() {
         let mut input = String::new();
         stdin.read_line(&mut input).unwrap();
 
-        println!("{}: not found", input.trim());
-
         if input.trim() == "exit 0" {
             break;
         }
+
+        println!("{}: not found", input.trim());
     }
 }
