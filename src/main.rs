@@ -31,11 +31,7 @@ fn main() -> Result<()> {
                     if builtin_commands.contains(&command) {
                         println!("{} is a shell builtin", command)
                     } else {
-                        let executables = executables_on_path()?;
-
-                        let maybe_executable = executables
-                            .into_iter()
-                            .find(|executable| executable.ends_with(command));
+                        let maybe_executable = find_executable_on_path(command)?;
 
                         if let Some(executable) = maybe_executable {
                             println!("{} is {}", command, executable.display())
@@ -52,26 +48,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn executables_on_path() -> Result<Vec<PathBuf>> {
+fn find_executable_on_path(executable: &str) -> Result<Option<PathBuf>> {
     let path_var = "PATH";
 
     let value = env::var(path_var)?;
 
-    let dirs: Vec<&Path> = value.split(":").map(Path::new).collect();
-
-    files_in_dirs(dirs).map_err(Error::Io)
-}
-
-fn files_in_dirs(dirs: Vec<&Path>) -> io::Result<Vec<PathBuf>> {
-    dirs.iter()
-        .map(|dir| fs::read_dir(dir).and_then(files_in_dir))
-        .collect::<io::Result<Vec<_>>>()
-        .map(|f| f.into_iter().flatten().collect())
-}
-
-fn files_in_dir(dir: ReadDir) -> io::Result<Vec<PathBuf>> {
-    dir.map(|res| res.map(|e| e.path()))
-        .collect::<io::Result<Vec<_>>>()
+    Ok(value
+        .split(":")
+        .map(|dir| Path::new(dir).join(executable))
+        .find(|path| fs::metadata(path).is_ok()))
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
