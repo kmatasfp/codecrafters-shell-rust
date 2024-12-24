@@ -27,7 +27,8 @@ fn main() -> Result<()> {
             ["echo", rest @ ..] => println!("{}", rest.join(" ")),
             ["type", builtin @ "echo"]
             | ["type", builtin @ "exit"]
-            | ["type", builtin @ "type"] => {
+            | ["type", builtin @ "type"]
+            | ["type", builtin @ "pwd"] => {
                 println!("{} is a shell builtin", builtin)
             }
             ["type", rest @ ..] => {
