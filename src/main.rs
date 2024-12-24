@@ -90,10 +90,23 @@ fn parse_into_command(input: &str) -> ShellCommand {
     let mut tokens = Vec::new();
     let mut in_single_quotes = false;
     let mut in_double_quotes = false;
+    let mut non_quoted_backslash = false;
     let mut current_word = String::new();
 
     for c in input.chars() {
         match c {
+            '"' if non_quoted_backslash => {
+                non_quoted_backslash = false;
+                current_word.push(c);
+            }
+            '\'' if non_quoted_backslash => {
+                non_quoted_backslash = false;
+                current_word.push(c);
+            }
+            '\\' if non_quoted_backslash => {
+                non_quoted_backslash = false;
+                current_word.push(c);
+            }
             '"' if !in_single_quotes => {
                 in_double_quotes = !in_double_quotes;
                 if !in_double_quotes {
@@ -115,8 +128,12 @@ fn parse_into_command(input: &str) -> ShellCommand {
                     }
                 }
             }
+            '\\' if !in_single_quotes && !in_double_quotes => {
+                non_quoted_backslash = true;
+            }
             ' ' | '\t' => {
                 if !in_single_quotes && !in_double_quotes {
+                    non_quoted_backslash = false;
                     // Only consider whitespace as a separator if not inside quotes
                     if !current_word.is_empty() {
                         tokens.push(current_word.clone());
@@ -128,6 +145,10 @@ fn parse_into_command(input: &str) -> ShellCommand {
                 }
             }
             _ => {
+                if !in_single_quotes && !in_double_quotes {
+                    non_quoted_backslash = false;
+                }
+
                 // Add characters to the current word
                 current_word.push(c);
             }
