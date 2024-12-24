@@ -28,7 +28,8 @@ fn main() -> Result<()> {
             ["type", builtin @ "echo"]
             | ["type", builtin @ "exit"]
             | ["type", builtin @ "type"]
-            | ["type", builtin @ "pwd"] => {
+            | ["type", builtin @ "pwd"]
+            | ["type", builtin @ "cd"] => {
                 println!("{} is a shell builtin", builtin)
             }
             ["type", rest @ ..] => {
@@ -44,6 +45,15 @@ fn main() -> Result<()> {
                 let curren_dir = env::current_dir()?;
 
                 println!("{}", curren_dir.display())
+            }
+            ["cd", rest @ ..] => {
+                if let Some(path) = rest.first() {
+                    let new_dir = Path::new(path);
+
+                    if env::set_current_dir(new_dir).is_err() {
+                        println!("cd: {}: No such file or directory", path);
+                    }
+                }
             }
             [c, rest @ ..] => {
                 if let Some(program) = find_executable_on_path(c)? {
