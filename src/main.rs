@@ -90,6 +90,7 @@ fn parse_into_command(input: &str) -> ShellCommand {
     let mut tokens = Vec::new();
     let mut in_single_quotes = false;
     let mut in_double_quotes = false;
+    let mut non_quoted_backslash = false;
     let mut quoted_backslash = false;
     let mut current_word = String::new();
 
@@ -102,6 +103,10 @@ fn parse_into_command(input: &str) -> ShellCommand {
             c if quoted_backslash => {
                 quoted_backslash = false;
                 current_word.push('\\');
+                current_word.push(c);
+            }
+            '"' | '\'' | '\\' | ' ' | '\t' if non_quoted_backslash => {
+                non_quoted_backslash = false;
                 current_word.push(c);
             }
             '"' => {
@@ -119,7 +124,9 @@ fn parse_into_command(input: &str) -> ShellCommand {
                     in_single_quotes = !in_single_quotes;
                 }
             }
-            '\\' if !in_double_quotes && !in_single_quotes => continue,
+            '\\' if !in_double_quotes && !in_single_quotes => {
+                non_quoted_backslash = true;
+            }
             '\\' if in_single_quotes => current_word.push(c),
             '\\' => quoted_backslash = true,
             ' ' | '\t' => {
@@ -135,6 +142,8 @@ fn parse_into_command(input: &str) -> ShellCommand {
                 }
             }
             _ => {
+                non_quoted_backslash = false;
+
                 // Add characters to the current word
                 current_word.push(c);
             }
