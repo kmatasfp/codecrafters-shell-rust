@@ -72,6 +72,7 @@ fn main() -> Result<()> {
                 }
             }
             ShellCommand::SysProgram(c, args) => {
+                println!("cmd: {} args: {:?}", c, args);
                 if let Some(program) = find_executable_on_path(&path, &c)? {
                     let output = run_executable_with_args(&program, args.as_slice())?;
 
@@ -103,19 +104,18 @@ fn parse_into_command(input: &str) -> ShellCommand {
                 non_quoted_backslash = false;
                 current_word.push(c);
             }
-            '"' if !in_single_quotes => {
+            '"' => {
                 in_double_quotes = !in_double_quotes;
-                // if !in_double_quotes {
-                //     // If we are closing a quote, add the word to the result
-                //     if !current_word.is_empty() {
-                //         tokens.push(current_word.clone());
-                //         current_word.clear();
-                //     }
-                // }
+                if in_single_quotes {
+                    current_word.push(c);
+                }
             }
-            '\'' if !in_double_quotes => {
+            '\'' => {
                 // Toggle the state of being inside quotes
                 in_single_quotes = !in_single_quotes;
+                if in_double_quotes {
+                    current_word.push(c);
+                }
             }
             '\\' if !in_single_quotes => {
                 non_quoted_backslash = true;
