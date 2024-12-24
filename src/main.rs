@@ -36,10 +36,8 @@ fn main() -> Result<()> {
                     if let Some(executable) = find_executable_on_path(program)? {
                         println!("{} is {}", program, executable.display())
                     } else {
-                        println!("{}: command not found", program)
+                        println!("{}: not found", program)
                     }
-                } else {
-                    println!(": command not found")
                 }
             }
             ["pwd", ..] => {
