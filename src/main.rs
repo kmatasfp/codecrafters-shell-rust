@@ -72,7 +72,6 @@ fn main() -> Result<()> {
                 }
             }
             ShellCommand::SysProgram(c, args) => {
-                println!("cmd: {} args: {:?}", c, args);
                 if let Some(program) = find_executable_on_path(&path, &c)? {
                     let output = run_executable_with_args(&program, args.as_slice())?;
 
