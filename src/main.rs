@@ -10,6 +10,9 @@ use std::{
 use std::{fs, path::PathBuf};
 
 fn main() -> Result<()> {
+    let home = env::var("HOME")?;
+    let path = env::var("PATH")?;
+
     loop {
         print!("$ ");
         io::stdout().flush()?;
@@ -34,7 +37,7 @@ fn main() -> Result<()> {
             }
             ["type", rest @ ..] => {
                 if let Some(program) = rest.first() {
-                    if let Some(executable) = find_executable_on_path(program)? {
+                    if let Some(executable) = find_executable_on_path(&path, program)? {
                         println!("{} is {}", program, executable.display())
                     } else {
                         println!("{}: not found", program)
@@ -47,16 +50,20 @@ fn main() -> Result<()> {
                 println!("{}", curren_dir.display())
             }
             ["cd", rest @ ..] => {
-                if let Some(path) = rest.first() {
-                    let new_dir = Path::new(path);
+                if let Some(directory) = rest.first() {
+                    let dir_path = if *directory == "~" {
+                        Path::new(&home)
+                    } else {
+                        Path::new(directory)
+                    };
 
-                    if env::set_current_dir(new_dir).is_err() {
-                        println!("cd: {}: No such file or directory", path);
+                    if env::set_current_dir(dir_path).is_err() {
+                        println!("cd: {}: No such file or directory", directory);
                     }
                 }
             }
             [c, rest @ ..] => {
-                if let Some(program) = find_executable_on_path(c)? {
+                if let Some(program) = find_executable_on_path(&path, c)? {
                     let output = run_executable_with_args(&program, rest)?;
 
                     println!("{}", String::from_utf8(output.stdout)?.trim())
@@ -70,12 +77,8 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn find_executable_on_path(executable: &str) -> Result<Option<PathBuf>> {
-    let path_var = "PATH";
-
-    let value = env::var(path_var)?;
-
-    Ok(value
+fn find_executable_on_path(path: &str, executable: &str) -> Result<Option<PathBuf>> {
+    Ok(path
         .split(":")
         .map(|dir| Path::new(dir).join(executable))
         .find(|path| fs::metadata(path).is_ok()))
