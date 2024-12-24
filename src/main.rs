@@ -92,12 +92,18 @@ fn parse_into_command(input: &str) -> ShellCommand {
     let mut in_single_quotes = false;
     let mut in_double_quotes = false;
     let mut non_quoted_backslash = false;
+    let mut quoted_backslash = false;
     let mut current_word = String::new();
 
     for c in input.chars() {
         match c {
-            '"' | '\\' | '$' | '\n' if non_quoted_backslash && in_double_quotes => {
-                non_quoted_backslash = false;
+            '"' | '\\' | '$' | '\n' if quoted_backslash => {
+                quoted_backslash = false;
+                current_word.push(c);
+            }
+            c if quoted_backslash => {
+                quoted_backslash = false;
+                current_word.push('\\');
                 current_word.push(c);
             }
             '"' | '\'' | '\\' | ' ' | '\t' if non_quoted_backslash => {
@@ -105,21 +111,25 @@ fn parse_into_command(input: &str) -> ShellCommand {
                 current_word.push(c);
             }
             '"' => {
-                in_double_quotes = !in_double_quotes;
                 if in_single_quotes {
                     current_word.push(c);
+                } else {
+                    in_double_quotes = !in_double_quotes;
                 }
             }
             '\'' => {
                 // Toggle the state of being inside quotes
-                in_single_quotes = !in_single_quotes;
                 if in_double_quotes {
                     current_word.push(c);
+                } else {
+                    in_single_quotes = !in_single_quotes;
                 }
             }
-            '\\' if !in_single_quotes => {
+            '\\' if !in_double_quotes && !in_single_quotes => {
                 non_quoted_backslash = true;
             }
+            '\\' if in_single_quotes => current_word.push(c),
+            '\\' => quoted_backslash = true,
             ' ' | '\t' => {
                 if !in_single_quotes && !in_double_quotes {
                     // Only consider whitespace as a separator if not inside quotes
