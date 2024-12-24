@@ -39,7 +39,7 @@ fn main() -> Result<()> {
                         println!("{}: not found", program)
                     }
                 } else {
-                    println!(": not found")
+                    println!(": command not found")
                 }
             }
             ["pwd", ..] => {
