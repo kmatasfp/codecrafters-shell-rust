@@ -88,15 +88,26 @@ fn main() -> Result<()> {
 
 fn parse_into_command(input: &str) -> ShellCommand {
     let mut tokens = Vec::new();
-    let mut in_quotes = false;
+    let mut in_single_quotes = false;
+    let mut in_double_quotes = false;
     let mut current_word = String::new();
 
     for c in input.chars() {
         match c {
-            '\'' => {
+            '"' if !in_single_quotes => {
+                in_double_quotes = !in_double_quotes;
+                if !in_double_quotes {
+                    // If we are closing a quote, add the word to the result
+                    if !current_word.is_empty() {
+                        tokens.push(current_word.clone());
+                        current_word.clear();
+                    }
+                }
+            }
+            '\'' if !in_double_quotes => {
                 // Toggle the state of being inside quotes
-                in_quotes = !in_quotes;
-                if !in_quotes {
+                in_single_quotes = !in_single_quotes;
+                if !in_single_quotes {
                     // If we are closing a quote, add the word to the result
                     if !current_word.is_empty() {
                         tokens.push(current_word.clone());
@@ -105,7 +116,7 @@ fn parse_into_command(input: &str) -> ShellCommand {
                 }
             }
             ' ' | '\t' => {
-                if !in_quotes {
+                if !in_single_quotes && !in_double_quotes {
                     // Only consider whitespace as a separator if not inside quotes
                     if !current_word.is_empty() {
                         tokens.push(current_word.clone());
