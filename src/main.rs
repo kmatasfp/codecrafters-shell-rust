@@ -36,11 +36,13 @@ fn main() -> Result<()> {
         let trimmed_input = input.trim();
         let command = parse_into_command(trimmed_input);
 
+        let built_in_commands = ["echo", "exit", "type", "pwd", "cd"];
+
         match command {
             ShellCommand::Exit(s) if s == "0" => break,
             ShellCommand::Exit(s) => eprintln!("Unknown exit code {}", s),
             ShellCommand::Echo(s) => println!("{}", s),
-            ShellCommand::Type(c) if c == "echo" || c == "type" || c == "pwd" || c == "cd" => {
+            ShellCommand::Type(c) if built_in_commands.contains(&c.as_str()) => {
                 println!("{} is a shell builtin", c)
             }
             ShellCommand::Type(c) => {
