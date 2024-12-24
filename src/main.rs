@@ -9,6 +9,17 @@ use std::{
 };
 use std::{fs, path::PathBuf};
 
+#[derive(Debug)]
+enum ShellCommand {
+    Exit(String),
+    Echo(String),
+    Type(String),
+    Pwd,
+    Cd(String),
+    SysProgram(String, Vec<String>),
+    Empty,
+}
+
 fn main() -> Result<()> {
     let home = env::var("HOME")?;
     let path = env::var("PATH")?;
@@ -23,38 +34,34 @@ fn main() -> Result<()> {
         stdin.read_line(&mut input)?;
 
         let trimmed_input = input.trim();
-        let command: Vec<&str> = trimmed_input.split_whitespace().collect();
+        let command = parse_into_command(trimmed_input);
 
-        match command.as_slice() {
-            ["exit", "0"] => break,
-            ["echo", rest @ ..] => println!("{}", rest.join(" ")),
-            ["type", builtin @ "echo"]
-            | ["type", builtin @ "exit"]
-            | ["type", builtin @ "type"]
-            | ["type", builtin @ "pwd"]
-            | ["type", builtin @ "cd"] => {
-                println!("{} is a shell builtin", builtin)
+        match command {
+            ShellCommand::Exit(s) if s == "0" => break,
+            ShellCommand::Exit(s) => eprintln!("Unknown exit code {}", s),
+            ShellCommand::Echo(s) => println!("{}", s),
+            ShellCommand::Type(c) if c == "echo" || c == "type" || c == "pwd" || c == "cd" => {
+                println!("{} is a shell builtin", c)
             }
-            ["type", rest @ ..] => {
-                if let Some(program) = rest.first() {
-                    if let Some(executable) = find_executable_on_path(&path, program)? {
-                        println!("{} is {}", program, executable.display())
+            ShellCommand::Type(c) => {
+                if !c.is_empty() {
+                    if let Some(executable) = find_executable_on_path(&path, &c)? {
+                        println!("{} is {}", c, executable.display())
                     } else {
-                        eprintln!("{}: not found", program)
+                        eprintln!("{}: not found", c)
                     }
                 }
             }
-            ["pwd", ..] => {
+            ShellCommand::Pwd => {
                 let curren_dir = env::current_dir()?;
-
                 println!("{}", curren_dir.display())
             }
-            ["cd", rest @ ..] => {
-                if let Some(directory) = rest.first() {
-                    let dir_path = if *directory == "~" {
+            ShellCommand::Cd(directory) => {
+                if !directory.is_empty() {
+                    let dir_path = if directory == "~" {
                         Path::new(&home)
                     } else {
-                        Path::new(directory)
+                        Path::new(&directory)
                     };
 
                     if env::set_current_dir(dir_path).is_err() {
@@ -62,19 +69,75 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            [c, rest @ ..] => {
-                if let Some(program) = find_executable_on_path(&path, c)? {
-                    let output = run_executable_with_args(&program, rest)?;
+            ShellCommand::SysProgram(c, args) => {
+                if let Some(program) = find_executable_on_path(&path, &c)? {
+                    let output = run_executable_with_args(&program, args.as_slice())?;
 
                     println!("{}", String::from_utf8(output.stdout)?.trim())
                 } else {
                     eprintln!("{}: command not found", c)
                 }
             }
-            [] => eprintln!(": command not found"),
+            ShellCommand::Empty => continue,
         }
     }
     Ok(())
+}
+
+fn parse_into_command(input: &str) -> ShellCommand {
+    let mut tokens = Vec::new();
+    let mut in_quotes = false;
+    let mut current_word = String::new();
+
+    for c in input.chars() {
+        match c {
+            '\'' => {
+                // Toggle the state of being inside quotes
+                in_quotes = !in_quotes;
+                if !in_quotes {
+                    // If we are closing a quote, add the word to the result
+                    if !current_word.is_empty() {
+                        tokens.push(current_word.clone());
+                        current_word.clear();
+                    }
+                }
+            }
+            ' ' | '\t' => {
+                if !in_quotes {
+                    // Only consider whitespace as a separator if not inside quotes
+                    if !current_word.is_empty() {
+                        tokens.push(current_word.clone());
+                        current_word.clear();
+                    }
+                } else {
+                    // If inside quotes, treat the space as part of the word
+                    current_word.push(c);
+                }
+            }
+            _ => {
+                // Add characters to the current word
+                current_word.push(c);
+            }
+        }
+    }
+
+    // Don't forget to add the last word if there is one
+    if !current_word.is_empty() {
+        tokens.push(current_word);
+    }
+
+    if let Some((head, tail)) = tokens.split_first() {
+        match head.as_str() {
+            "echo" => ShellCommand::Echo(tail.join(" ")),
+            "exit" => ShellCommand::Exit(tail.join(" ")),
+            "type" => ShellCommand::Type(tail.join(" ")),
+            "pwd" => ShellCommand::Pwd,
+            "cd" => ShellCommand::Cd(tail.join(" ")),
+            c => ShellCommand::SysProgram(c.to_owned(), tail.to_vec()),
+        }
+    } else {
+        ShellCommand::Empty
+    }
 }
 
 fn find_executable_on_path(path: &str, executable: &str) -> Result<Option<PathBuf>> {
@@ -84,7 +147,7 @@ fn find_executable_on_path(path: &str, executable: &str) -> Result<Option<PathBu
         .find(|path| fs::metadata(path).is_ok()))
 }
 
-fn run_executable_with_args(program: &PathBuf, args: &[&str]) -> io::Result<Output> {
+fn run_executable_with_args(program: &PathBuf, args: &[String]) -> io::Result<Output> {
     Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
