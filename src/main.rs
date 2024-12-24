@@ -40,7 +40,7 @@ fn main() -> Result<()> {
                     if let Some(executable) = find_executable_on_path(&path, program)? {
                         println!("{} is {}", program, executable.display())
                     } else {
-                        println!("{}: not found", program)
+                        eprintln!("{}: not found", program)
                     }
                 }
             }
@@ -58,7 +58,7 @@ fn main() -> Result<()> {
                     };
 
                     if env::set_current_dir(dir_path).is_err() {
-                        println!("cd: {}: No such file or directory", directory);
+                        eprintln!("cd: {}: No such file or directory", directory);
                     }
                 }
             }
@@ -68,10 +68,10 @@ fn main() -> Result<()> {
 
                     println!("{}", String::from_utf8(output.stdout)?.trim())
                 } else {
-                    println!("{}: command not found", c)
+                    eprintln!("{}: command not found", c)
                 }
             }
-            [] => println!(": command not found"),
+            [] => eprintln!(": command not found"),
         }
     }
     Ok(())
