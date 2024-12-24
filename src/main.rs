@@ -41,6 +41,11 @@ fn main() -> Result<()> {
                     println!(": not found")
                 }
             }
+            ["pwd", ..] => {
+                let curren_dir = env::current_dir()?;
+
+                println!("{}", curren_dir.display())
+            }
             [c, rest @ ..] => {
                 if let Some(program) = find_executable_on_path(c)? {
                     let output = run_executable_with_args(&program, rest)?;
