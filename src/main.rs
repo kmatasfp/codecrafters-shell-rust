@@ -95,15 +95,7 @@ fn parse_into_command(input: &str) -> ShellCommand {
 
     for c in input.chars() {
         match c {
-            '"' if non_quoted_backslash => {
-                non_quoted_backslash = false;
-                current_word.push(c);
-            }
-            '\'' if non_quoted_backslash => {
-                non_quoted_backslash = false;
-                current_word.push(c);
-            }
-            '\\' if non_quoted_backslash => {
+            '"' | '\'' | '\\' | ' ' | '\t' if non_quoted_backslash => {
                 non_quoted_backslash = false;
                 current_word.push(c);
             }
@@ -133,7 +125,6 @@ fn parse_into_command(input: &str) -> ShellCommand {
             }
             ' ' | '\t' => {
                 if !in_single_quotes && !in_double_quotes {
-                    non_quoted_backslash = false;
                     // Only consider whitespace as a separator if not inside quotes
                     if !current_word.is_empty() {
                         tokens.push(current_word.clone());
