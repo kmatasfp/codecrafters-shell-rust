@@ -96,6 +96,10 @@ fn tokenize(input: &str) -> Vec<String> {
 
     for (i, c) in input.chars().enumerate() {
         match c {
+            '\\' if in_escape => {
+                current_token.push(c);
+                in_escape = false;
+            }
             '\\' if !in_single_quote && !in_double_quote => in_escape = true,
             '\\' if in_double_quote => {
                 if let Some(next_char) = input.chars().nth(i + 1) {
@@ -123,7 +127,6 @@ fn tokenize(input: &str) -> Vec<String> {
             }
             '"' if !in_single_quote => in_double_quote = true,
             ' ' | '\t' if in_escape => {
-                println!("escaped space");
                 current_token.push(c);
                 in_escape = false;
             }
@@ -290,6 +293,10 @@ mod tests {
             (
                 r#""exe with 'single quotes'""#,
                 vec!["exe with 'single quotes'"],
+            ),
+            (
+                r#"echo "mixed\"quote'example'\\""#,
+                vec!["echo", r#"mixed"quote'example'\"#],
             ),
         ];
 
