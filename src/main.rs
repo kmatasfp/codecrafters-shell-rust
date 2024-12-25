@@ -34,6 +34,7 @@ fn main() -> Result<()> {
         stdin.read_line(&mut input)?;
 
         let trimmed_input = input.trim();
+
         let command = parse_into_command(trimmed_input);
 
         let built_in_commands = ["echo", "exit", "type", "pwd", "cd"];
@@ -86,74 +87,71 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn parse_into_command(input: &str) -> ShellCommand {
+fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
-    let mut in_single_quotes = false;
-    let mut in_double_quotes = false;
-    let mut non_quoted_backslash = false;
-    let mut quoted_backslash = false;
-    let mut current_word = String::new();
+    let mut current_token = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_escape = false;
 
-    for c in input.chars() {
+    for (i, c) in input.chars().enumerate() {
         match c {
-            '"' | '\\' | '$' | '\n' if quoted_backslash => {
-                quoted_backslash = false;
-                current_word.push(c);
-            }
-            c if quoted_backslash => {
-                quoted_backslash = false;
-                current_word.push('\\');
-                current_word.push(c);
-            }
-            '"' | '\'' | '\\' | ' ' | '\t' if non_quoted_backslash => {
-                non_quoted_backslash = false;
-                current_word.push(c);
-            }
-            '"' => {
-                if in_single_quotes {
-                    current_word.push(c);
-                } else {
-                    in_double_quotes = !in_double_quotes;
-                }
-            }
-            '\'' => {
-                // Toggle the state of being inside quotes
-                if in_double_quotes {
-                    current_word.push(c);
-                } else {
-                    in_single_quotes = !in_single_quotes;
-                }
-            }
-            '\\' if !in_double_quotes && !in_single_quotes => {
-                non_quoted_backslash = true;
-            }
-            '\\' if in_single_quotes => current_word.push(c),
-            '\\' => quoted_backslash = true,
-            ' ' | '\t' => {
-                if !in_single_quotes && !in_double_quotes {
-                    // Only consider whitespace as a separator if not inside quotes
-                    if !current_word.is_empty() {
-                        tokens.push(current_word.clone());
-                        current_word.clear();
+            '\\' if !in_single_quote && !in_double_quote => in_escape = true,
+            '\\' if in_double_quote => {
+                if let Some(next_char) = input.chars().nth(i + 1) {
+                    if next_char == '$'
+                        || next_char == '\\'
+                        || next_char == '"'
+                        || next_char == '\n'
+                    {
+                        in_escape = true;
+                    } else {
+                        current_token.push(c);
                     }
-                } else {
-                    // If inside quotes, treat the space as part of the word
-                    current_word.push(c);
                 }
             }
+            '\'' if in_single_quote => {
+                in_single_quote = false;
+            }
+            '\'' if !in_double_quote => in_single_quote = true,
+            '"' if in_escape => {
+                current_token.push(c);
+                in_escape = false;
+            }
+            '"' if in_double_quote => {
+                in_double_quote = false;
+            }
+            '"' if !in_single_quote => in_double_quote = true,
+            ' ' | '\t' if in_escape => {
+                println!("escaped space");
+                current_token.push(c);
+                in_escape = false;
+            }
+            ' ' | '\t' if !in_single_quote && !in_double_quote => {
+                if !current_token.is_empty() {
+                    tokens.push(current_token.clone());
+                    current_token.clear();
+                }
+            }
+            ' ' | '\t' => current_token.push(c),
+            '\n' if in_escape => in_escape = false,
             _ => {
-                non_quoted_backslash = false;
-
-                // Add characters to the current word
-                current_word.push(c);
+                current_token.push(c);
+                in_escape = false;
             }
         }
     }
 
     // Don't forget to add the last word if there is one
-    if !current_word.is_empty() {
-        tokens.push(current_word);
+    if !current_token.is_empty() {
+        tokens.push(current_token);
     }
+
+    tokens
+}
+
+fn parse_into_command(input: &str) -> ShellCommand {
+    let tokens = tokenize(input);
 
     if let Some((head, tail)) = tokens.split_first() {
         match head.as_str() {
@@ -218,3 +216,102 @@ impl core::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokenize_should_split_on_whitespace() {
+        let result = tokenize("echo foo     bar asd");
+        assert_eq!(result, vec!["echo", "foo", "bar", "asd"]);
+    }
+
+    #[test]
+    fn tokenize_should_preserve_all_characters_in_single_quotes() {
+        let test_cases = vec![
+            (
+                "echo 'foo                  bar'",
+                vec!["echo", "foo                  bar"],
+            ),
+            (
+                "cat '/tmp/file name' '/tmp/file name with spaces'",
+                vec!["cat", "/tmp/file name", "/tmp/file name with spaces"],
+            ),
+            (r#"echo 'foo\     bar'"#, vec!["echo", r#"foo\     bar"#]),
+            (r#"echo 'foo" bar'"#, vec!["echo", r#"foo" bar"#]),
+            (r#"'exe with "quotes"'"#, vec![r#"exe with "quotes""#]),
+        ];
+
+        for (test_case, expected_result) in test_cases {
+            assert_eq!(tokenize(test_case), expected_result);
+        }
+    }
+
+    #[test]
+    fn tokenize_should_preserve_most_characters_in_double_quotes_except_backslash_in_cases_followed_by_speciacial_character(
+    ) {
+        let test_cases = vec![
+            (r#"echo "/""#, vec!["echo", "/"]),
+            (r#"echo "foo"bar"#, vec!["echo", "foobar"]),
+            (
+                r#"echo "quz  hello"  "bar""#,
+                vec!["echo", "quz  hello", "bar"],
+            ),
+            (
+                r#"echo "bar"  "shell's"  "foo""#,
+                vec!["echo", "bar", "shell's", "foo"],
+            ),
+            (
+                r#"cat "/tmp/file name" "/tmp/'file name' with spaces""#,
+                vec!["cat", "/tmp/file name", "/tmp/'file name' with spaces"],
+            ),
+            (
+                r#"echo "before\   after""#,
+                vec!["echo", r#"before\   after"#],
+            ),
+            (
+                r#"cat "/tmp/file\\name" "/tmp/file\ name""#,
+                vec!["cat", r#"/tmp/file\name"#, r#"/tmp/file\ name"#],
+            ),
+            (
+                r#"echo "hello'script'\\n'world""#,
+                vec!["echo", r#"hello'script'\n'world"#],
+            ),
+            (r#"echo "\""#, vec!["echo", r#"""#]),
+            (
+                r#"echo "hello\"insidequotes"script\""#,
+                vec!["echo", r#"hello"insidequotesscript""#],
+            ),
+            (
+                r#"cat "/tmp/"file\name"" "/tmp/"file name"""#,
+                vec!["cat", "/tmp/filename", "/tmp/file", "name"],
+            ),
+            (
+                r#""exe with 'single quotes'""#,
+                vec!["exe with 'single quotes'"],
+            ),
+        ];
+
+        for (test_case, expected_result) in test_cases {
+            assert_eq!(tokenize(test_case), expected_result);
+        }
+    }
+
+    #[test]
+    fn tokenize_should_treat_unquoted_backslash_as_escape_character() {
+        let test_cases = vec![
+            (r#"echo \"#, vec!["echo"]),
+            (r#"echo script\""#, vec!["echo", r#"script""#]),
+            (
+                r#"echo world\ \ \ \ \ \ script"#,
+                vec!["echo", "world      script"],
+            ),
+            (r#"cat file\ name"#, vec!["cat", "file name"]),
+        ];
+
+        for (test_case, expected_result) in test_cases {
+            assert_eq!(tokenize(test_case), expected_result);
+        }
+    }
+}
