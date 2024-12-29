@@ -14,6 +14,7 @@ use std::{fs, path::PathBuf};
 enum ShellExec {
     PrintToStd(Command),
     RedirectedStdOut(Command, PathBuf),
+    RedirectedStdErr(Command, PathBuf),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -91,6 +92,38 @@ fn main() -> Result<()> {
 
                         if !output.stderr.is_empty() {
                             print_sys_program_failure_to_stderr(c, output.stderr)?
+                        }
+                    }
+                    CommandOutput::Noop => continue,
+                }
+            }
+            ShellExec::RedirectedStdErr(command, file) => {
+                let mut file = File::create(file)?;
+                let output = exec_command(command, &path, &home)?;
+
+                match output {
+                    CommandOutput::StdOut(s) => eprintln!("{}", s),
+                    CommandOutput::StdErr(s) => write!(file, "{}", s)?,
+                    CommandOutput::Wrapped(c, output) => {
+                        if !output.stdout.is_empty() {
+                            println!("{}", String::from_utf8(output.stdout)?.trim())
+                        }
+
+                        if !output.stderr.is_empty() {
+                            let raw_error_message = String::from_utf8(output.stderr)?;
+
+                            if let Some(split_point) = raw_error_message.find(&c) {
+                                if let Some((_, right_half)) =
+                                    raw_error_message.split_at_checked(split_point)
+                                {
+                                    let err_msg = &right_half[c.len()..];
+                                    write!(file, "{}{}", c, err_msg.trim())?;
+                                } else {
+                                    write!(file, "{}", raw_error_message.trim())?;
+                                }
+                            } else {
+                                write!(file, "{}", raw_error_message.trim())?;
+                            }
                         }
                     }
                     CommandOutput::Noop => continue,
@@ -193,20 +226,22 @@ fn parse(input: &str) -> ShellExec {
             let command = &left_half[..left_half.len()];
             let file = &right_half[1..];
 
-            let command = if let Some((head, tail)) = command.split_first() {
-                match head.as_str() {
-                    "echo" => Command::Echo(tail.join(" ")),
-                    "exit" => Command::Exit(tail.join(" ")),
-                    "type" => Command::Type(tail.join(" ")),
-                    "pwd" => Command::Pwd,
-                    "cd" => Command::Cd(tail.join(" ")),
-                    c => Command::SysProgram(c.to_owned(), tail.to_vec()),
-                }
-            } else {
-                Command::Invalid
-            };
+            let command = redirected_command(command.to_vec());
 
             ShellExec::RedirectedStdOut(command, PathBuf::from(file.join(" ")))
+        } else {
+            ShellExec::PrintToStd(Command::Invalid)
+        }
+    } else if let Some((split_point, _)) =
+        tokens.iter().enumerate().find(|&(_, token)| token == "2>")
+    {
+        if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
+            let command = &left_half[..left_half.len()];
+            let file = &right_half[1..];
+
+            let command = redirected_command(command.to_vec());
+
+            ShellExec::RedirectedStdErr(command, PathBuf::from(file.join(" ")))
         } else {
             ShellExec::PrintToStd(Command::Invalid)
         }
@@ -223,6 +258,21 @@ fn parse(input: &str) -> ShellExec {
         ShellExec::PrintToStd(command)
     } else {
         ShellExec::PrintToStd(Command::Empty)
+    }
+}
+
+fn redirected_command(command: Vec<String>) -> Command {
+    if let Some((head, tail)) = command.split_first() {
+        match head.as_str() {
+            "echo" => Command::Echo(tail.join(" ")),
+            "exit" => Command::Exit(tail.join(" ")),
+            "type" => Command::Type(tail.join(" ")),
+            "pwd" => Command::Pwd,
+            "cd" => Command::Cd(tail.join(" ")),
+            c => Command::SysProgram(c.to_owned(), tail.to_vec()),
+        }
+    } else {
+        Command::Invalid
     }
 }
 
@@ -455,15 +505,43 @@ mod tests {
     }
 
     #[test]
-    fn parse_into_command_should_return_redirect_std_in_case_tokens_contain_redirection_operator() {
-        let input = "ls /tmp/baz > /tmp/foo/baz.md";
+    fn parse_into_command_should_return_redirect_std_out_in_case_tokens_contain_redirection_operator(
+    ) {
+        let test_cases = vec![
+            (
+                "ls /tmp/baz > /tmp/foo/baz.md",
+                ShellExec::RedirectedStdOut(
+                    Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                    PathBuf::from("/tmp/foo/baz.md"),
+                ),
+            ),
+            (
+                "ls /tmp/baz 1> /tmp/foo/baz.md",
+                ShellExec::RedirectedStdOut(
+                    Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                    PathBuf::from("/tmp/foo/baz.md"),
+                ),
+            ),
+        ];
 
-        assert_eq!(
-            parse(input),
-            ShellExec::RedirectedStdOut(
+        for (test_case, expected_result) in test_cases {
+            assert_eq!(parse(test_case), expected_result);
+        }
+    }
+
+    #[test]
+    fn parse_into_command_should_return_redirect_std_err_in_case_tokens_contain_redirection_operator(
+    ) {
+        let test_cases = vec![(
+            "ls /tmp/baz 2> /tmp/foo/baz.md",
+            ShellExec::RedirectedStdErr(
                 Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
-                PathBuf::from("/tmp/foo/baz.md")
-            )
-        )
+                PathBuf::from("/tmp/foo/baz.md"),
+            ),
+        )];
+
+        for (test_case, expected_result) in test_cases {
+            assert_eq!(parse(test_case), expected_result);
+        }
     }
 }
