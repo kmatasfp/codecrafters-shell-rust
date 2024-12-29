@@ -112,13 +112,13 @@ fn main() -> Result<()> {
 fn handle_redirected_std_out(mut file: File, output: CommandOutput) -> Result<()> {
     match output {
         CommandOutput::StdOut(s) => {
-            write!(file, "{}", s)?;
+            writeln!(file, "{}", s)?;
             file.flush()?
         }
         CommandOutput::StdErr(s) => eprintln!("{}", s),
         CommandOutput::Wrapped(c, output) => {
             if !output.stdout.is_empty() {
-                write!(file, "{}", String::from_utf8(output.stdout)?.trim())?;
+                writeln!(file, "{}", String::from_utf8(output.stdout)?.trim())?;
                 file.flush()?
             }
 
@@ -135,7 +135,7 @@ fn handle_redirected_std_out(mut file: File, output: CommandOutput) -> Result<()
 fn handle_redirected_std_err(mut file: File, output: CommandOutput) -> Result<()> {
     match output {
         CommandOutput::StdOut(s) => eprintln!("{}", s),
-        CommandOutput::StdErr(s) => write!(file, "{}", s)?,
+        CommandOutput::StdErr(s) => writeln!(file, "{}", s)?,
         CommandOutput::Wrapped(c, output) => {
             if !output.stdout.is_empty() {
                 println!("{}", String::from_utf8(output.stdout)?.trim())
@@ -147,12 +147,12 @@ fn handle_redirected_std_err(mut file: File, output: CommandOutput) -> Result<()
                 if let Some(split_point) = raw_error_message.find(&c) {
                     if let Some((_, right_half)) = raw_error_message.split_at_checked(split_point) {
                         let err_msg = &right_half[c.len()..];
-                        write!(file, "{}{}", c, err_msg.trim())?;
+                        writeln!(file, "{}{}", c, err_msg.trim())?;
                     } else {
-                        write!(file, "{}", raw_error_message.trim())?;
+                        writeln!(file, "{}", raw_error_message.trim())?;
                     }
                 } else {
-                    write!(file, "{}", raw_error_message.trim())?;
+                    writeln!(file, "{}", raw_error_message.trim())?;
                 }
 
                 file.flush()?;
