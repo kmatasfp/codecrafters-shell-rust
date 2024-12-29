@@ -247,53 +247,48 @@ fn exec_command(command: Command, path: &str, home: &str) -> Result<CommandOutpu
 fn parse(input: &str) -> ShellExec {
     let tokens = tokenize(input);
 
-    if let Some((split_point, _)) = tokens
-        .iter()
-        .enumerate()
-        .find(|&(_, token)| token == "1>" || token == ">")
-    {
-        if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
-            let command = &left_half[..left_half.len()];
-            let file = &right_half[1..];
+    if let Some((split_point, redirection_type)) = tokens.iter().enumerate().find(|&(_, token)| {
+        token == "1>"
+            || token == ">"
+            || token == "1>>"
+            || token == ">>"
+            || token == "2>"
+            || token == "2>>"
+    }) {
+        if redirection_type == "1>" || redirection_type == ">" {
+            if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
+                let command = &left_half[..left_half.len()];
+                let file = &right_half[1..];
 
-            let command = redirected_command(command.to_vec());
+                let command = redirected_command(command.to_vec());
 
-            ShellExec::RedirectedStdOut(command, PathBuf::from(file.join(" ")))
-        } else {
-            ShellExec::PrintToStd(Command::Invalid)
-        }
-    } else if let Some((split_point, _)) = tokens
-        .iter()
-        .enumerate()
-        .find(|&(_, token)| token == "1>>" || token == ">>")
-    {
-        if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
-            let command = &left_half[..left_half.len()];
-            let file = &right_half[1..];
+                ShellExec::RedirectedStdOut(command, PathBuf::from(file.join(" ")))
+            } else {
+                ShellExec::PrintToStd(Command::Invalid)
+            }
+        } else if redirection_type == "1>>" || redirection_type == ">>" {
+            if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
+                let command = &left_half[..left_half.len()];
+                let file = &right_half[1..];
 
-            let command = redirected_command(command.to_vec());
+                let command = redirected_command(command.to_vec());
 
-            ShellExec::RedirectedStdOutAppend(command, PathBuf::from(file.join(" ")))
-        } else {
-            ShellExec::PrintToStd(Command::Invalid)
-        }
-    } else if let Some((split_point, _)) =
-        tokens.iter().enumerate().find(|&(_, token)| token == "2>")
-    {
-        if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
-            let command = &left_half[..left_half.len()];
-            let file = &right_half[1..];
+                ShellExec::RedirectedStdOutAppend(command, PathBuf::from(file.join(" ")))
+            } else {
+                ShellExec::PrintToStd(Command::Invalid)
+            }
+        } else if redirection_type == "2>" {
+            if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
+                let command = &left_half[..left_half.len()];
+                let file = &right_half[1..];
 
-            let command = redirected_command(command.to_vec());
+                let command = redirected_command(command.to_vec());
 
-            ShellExec::RedirectedStdErr(command, PathBuf::from(file.join(" ")))
-        } else {
-            ShellExec::PrintToStd(Command::Invalid)
-        }
-    } else if let Some((split_point, _)) =
-        tokens.iter().enumerate().find(|&(_, token)| token == "2>>")
-    {
-        if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
+                ShellExec::RedirectedStdErr(command, PathBuf::from(file.join(" ")))
+            } else {
+                ShellExec::PrintToStd(Command::Invalid)
+            }
+        } else if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
             let command = &left_half[..left_half.len()];
             let file = &right_half[1..];
 
