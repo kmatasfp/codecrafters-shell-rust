@@ -3,14 +3,21 @@ use core::str;
 use std::io::{self, Write};
 use std::{
     env::{self, VarError},
+    fs::File,
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
     string::FromUtf8Error,
 };
 use std::{fs, path::PathBuf};
 
-#[derive(Debug)]
-enum ShellCommand {
+#[derive(Debug, PartialEq, Eq)]
+enum ShellExec {
+    PrintToStd(Command),
+    RedirectedStdOut(Command, PathBuf),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Command {
     Exit(String),
     Echo(String),
     Type(String),
@@ -18,6 +25,15 @@ enum ShellCommand {
     Cd(String),
     SysProgram(String, Vec<String>),
     Empty,
+    Invalid,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CommandOutput {
+    StdOut(String),
+    StdErr(String),
+    Wrapped(String, Output),
+    Noop,
 }
 
 fn main() -> Result<()> {
@@ -35,56 +51,179 @@ fn main() -> Result<()> {
 
         let trimmed_input = input.trim();
 
-        let command = parse_into_command(trimmed_input);
+        let exec = parse(trimmed_input);
 
-        let built_in_commands = ["echo", "exit", "type", "pwd", "cd"];
+        match exec {
+            ShellExec::PrintToStd(Command::Exit(s)) if s == "0" => break,
+            ShellExec::RedirectedStdOut(Command::Exit(s), _) if s == "0" => break,
+            ShellExec::PrintToStd(Command::Empty) => continue,
+            ShellExec::RedirectedStdOut(Command::Empty, _) => continue,
+            ShellExec::PrintToStd(c) => {
+                let output = exec_command(c, &path, &home)?;
 
-        match command {
-            ShellCommand::Exit(s) if s == "0" => break,
-            ShellCommand::Exit(s) => eprintln!("Unknown exit code {}", s),
-            ShellCommand::Echo(s) => println!("{}", s),
-            ShellCommand::Type(c) if built_in_commands.contains(&c.as_str()) => {
-                println!("{} is a shell builtin", c)
-            }
-            ShellCommand::Type(c) => {
-                if !c.is_empty() {
-                    if let Some(executable) = find_executable_on_path(&path, &c)? {
-                        println!("{} is {}", c, executable.display())
-                    } else {
-                        eprintln!("{}: not found", c)
+                match output {
+                    CommandOutput::StdOut(s) => println!("{}", s),
+                    CommandOutput::StdErr(s) => eprintln!("{}", s),
+                    CommandOutput::Wrapped(c, output) => {
+                        if !output.stdout.is_empty() {
+                            println!("{}", String::from_utf8(output.stdout)?.trim())
+                        }
+
+                        if !output.stderr.is_empty() {
+                            print_sys_program_failure_to_stderr(c, output.stderr)?
+                        }
                     }
+
+                    CommandOutput::Noop => continue,
                 }
             }
-            ShellCommand::Pwd => {
-                let curren_dir = env::current_dir()?;
-                println!("{}", curren_dir.display())
-            }
-            ShellCommand::Cd(directory) => {
-                if !directory.is_empty() {
-                    let dir_path = if directory == "~" {
-                        Path::new(&home)
-                    } else {
-                        Path::new(&directory)
-                    };
+            ShellExec::RedirectedStdOut(command, file) => {
+                let mut file = File::create(file)?;
+                let output = exec_command(command, &path, &home)?;
 
-                    if env::set_current_dir(dir_path).is_err() {
-                        eprintln!("cd: {}: No such file or directory", directory);
+                match output {
+                    CommandOutput::StdOut(s) => write!(file, "{}", s)?,
+                    CommandOutput::StdErr(s) => eprintln!("{}", s),
+                    CommandOutput::Wrapped(c, output) => {
+                        if !output.stdout.is_empty() {
+                            write!(file, "{}", String::from_utf8(output.stdout)?.trim())?
+                        }
+
+                        if !output.stderr.is_empty() {
+                            print_sys_program_failure_to_stderr(c, output.stderr)?
+                        }
                     }
+                    CommandOutput::Noop => continue,
                 }
             }
-            ShellCommand::SysProgram(c, args) => {
-                if let Some(program) = find_executable_on_path(&path, &c)? {
-                    let output = run_executable_with_args(&program, args.as_slice())?;
-
-                    println!("{}", String::from_utf8(output.stdout)?.trim())
-                } else {
-                    eprintln!("{}: command not found", c)
-                }
-            }
-            ShellCommand::Empty => continue,
         }
     }
     Ok(())
+}
+
+fn print_sys_program_failure_to_stderr(program: String, stderr: Vec<u8>) -> Result<()> {
+    let raw_error_message = String::from_utf8(stderr)?;
+
+    if let Some(split_point) = raw_error_message.find(&program) {
+        if let Some((_, right_half)) = raw_error_message.split_at_checked(split_point) {
+            let err_msg = &right_half[program.len()..];
+            eprintln!("{}{}", program, err_msg.trim());
+        } else {
+            eprintln!("{}", raw_error_message.trim());
+        }
+    } else {
+        eprintln!("{}", raw_error_message.trim());
+    }
+
+    Ok(())
+}
+
+fn exec_command(command: Command, path: &str, home: &str) -> Result<CommandOutput> {
+    let built_in_commands = ["echo", "exit", "type", "pwd", "cd"];
+
+    match command {
+        Command::Exit(s) if s == "0" => Ok(CommandOutput::Noop),
+        Command::Exit(s) => Ok(CommandOutput::StdErr(format!("Unknown exit code {}", s))),
+        Command::Echo(s) => Ok(CommandOutput::StdOut(s.to_string())),
+        Command::Type(c) if built_in_commands.contains(&c.as_str()) => {
+            Ok(CommandOutput::StdOut(format!("{} is a shell builtin", c)))
+        }
+        Command::Type(c) => {
+            if !c.is_empty() {
+                if let Some(executable) = find_executable_on_path(path, &c)? {
+                    Ok(CommandOutput::StdOut(format!(
+                        "{} is {}",
+                        c,
+                        executable.display()
+                    )))
+                } else {
+                    Ok(CommandOutput::StdErr(format!("{}: not found", c)))
+                }
+            } else {
+                Ok(CommandOutput::Noop)
+            }
+        }
+        Command::Pwd => {
+            let curren_dir = env::current_dir()?;
+            Ok(CommandOutput::StdOut(format!("{}", curren_dir.display())))
+        }
+        Command::Cd(directory) => {
+            if !directory.is_empty() {
+                let dir_path = if directory == "~" {
+                    Path::new(home)
+                } else {
+                    Path::new(&directory)
+                };
+
+                if env::set_current_dir(dir_path).is_err() {
+                    Ok(CommandOutput::StdOut(format!(
+                        "cd: {}: No such file or directory",
+                        directory
+                    )))
+                } else {
+                    Ok(CommandOutput::Noop)
+                }
+            } else {
+                Ok(CommandOutput::Noop)
+            }
+        }
+        Command::SysProgram(c, args) => {
+            if let Some(program) = find_executable_on_path(path, &c)? {
+                let output = run_executable_with_args(&program, args.as_slice())?;
+
+                Ok(CommandOutput::Wrapped(c.to_string(), output))
+            } else {
+                Ok(CommandOutput::StdErr(format!("{}: command not found", c)))
+            }
+        }
+        Command::Empty => Ok(CommandOutput::Noop),
+        Command::Invalid => Err(Error::InvalidCommand),
+    }
+}
+
+fn parse(input: &str) -> ShellExec {
+    let tokens = tokenize(input);
+
+    if let Some((split_point, _)) = tokens
+        .iter()
+        .enumerate()
+        .find(|&(_, token)| token == "1>" || token == ">")
+    {
+        if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
+            let command = &left_half[..left_half.len()];
+            let file = &right_half[1..];
+
+            let command = if let Some((head, tail)) = command.split_first() {
+                match head.as_str() {
+                    "echo" => Command::Echo(tail.join(" ")),
+                    "exit" => Command::Exit(tail.join(" ")),
+                    "type" => Command::Type(tail.join(" ")),
+                    "pwd" => Command::Pwd,
+                    "cd" => Command::Cd(tail.join(" ")),
+                    c => Command::SysProgram(c.to_owned(), tail.to_vec()),
+                }
+            } else {
+                Command::Invalid
+            };
+
+            ShellExec::RedirectedStdOut(command, PathBuf::from(file.join(" ")))
+        } else {
+            ShellExec::PrintToStd(Command::Invalid)
+        }
+    } else if let Some((head, tail)) = tokens.split_first() {
+        let command = match head.as_str() {
+            "echo" => Command::Echo(tail.join(" ")),
+            "exit" => Command::Exit(tail.join(" ")),
+            "type" => Command::Type(tail.join(" ")),
+            "pwd" => Command::Pwd,
+            "cd" => Command::Cd(tail.join(" ")),
+            c => Command::SysProgram(c.to_owned(), tail.to_vec()),
+        };
+
+        ShellExec::PrintToStd(command)
+    } else {
+        ShellExec::PrintToStd(Command::Empty)
+    }
 }
 
 fn tokenize(input: &str) -> Vec<String> {
@@ -113,6 +252,10 @@ fn tokenize(input: &str) -> Vec<String> {
                         current_token.push(c);
                     }
                 }
+            }
+            '\'' if in_escape => {
+                current_token.push(c);
+                in_escape = false;
             }
             '\'' if in_single_quote => {
                 in_single_quote = false;
@@ -153,23 +296,6 @@ fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
-fn parse_into_command(input: &str) -> ShellCommand {
-    let tokens = tokenize(input);
-
-    if let Some((head, tail)) = tokens.split_first() {
-        match head.as_str() {
-            "echo" => ShellCommand::Echo(tail.join(" ")),
-            "exit" => ShellCommand::Exit(tail.join(" ")),
-            "type" => ShellCommand::Type(tail.join(" ")),
-            "pwd" => ShellCommand::Pwd,
-            "cd" => ShellCommand::Cd(tail.join(" ")),
-            c => ShellCommand::SysProgram(c.to_owned(), tail.to_vec()),
-        }
-    } else {
-        ShellCommand::Empty
-    }
-}
-
 fn find_executable_on_path(path: &str, executable: &str) -> Result<Option<PathBuf>> {
     Ok(path
         .split(":")
@@ -178,7 +304,7 @@ fn find_executable_on_path(path: &str, executable: &str) -> Result<Option<PathBu
 }
 
 fn run_executable_with_args(program: &PathBuf, args: &[String]) -> io::Result<Output> {
-    Command::new(program)
+    std::process::Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
         .output()
@@ -189,6 +315,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum Error {
+    InvalidCommand,
     EncodingError(FromUtf8Error),
     EnvVarError(VarError),
     Io(std::io::Error),
@@ -309,16 +436,34 @@ mod tests {
     fn tokenize_should_treat_unquoted_backslash_as_escape_character() {
         let test_cases = vec![
             (r#"echo \"#, vec!["echo"]),
+            (r#"echo \'"#, vec!["echo", r#"'"#]),
             (r#"echo script\""#, vec!["echo", r#"script""#]),
             (
                 r#"echo world\ \ \ \ \ \ script"#,
                 vec!["echo", "world      script"],
             ),
             (r#"cat file\ name"#, vec!["cat", "file name"]),
+            (
+                r#"echo \'\"test example\"\'"#,
+                vec!["echo", r#"'"test"#, r#"example"'"#],
+            ),
         ];
 
         for (test_case, expected_result) in test_cases {
             assert_eq!(tokenize(test_case), expected_result);
         }
+    }
+
+    #[test]
+    fn parse_into_command_should_return_redirect_std_in_case_tokens_contain_redirection_operator() {
+        let input = "ls /tmp/baz > /tmp/foo/baz.md";
+
+        assert_eq!(
+            parse(input),
+            ShellExec::RedirectedStdOut(
+                Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                PathBuf::from("/tmp/foo/baz.md")
+            )
+        )
     }
 }
