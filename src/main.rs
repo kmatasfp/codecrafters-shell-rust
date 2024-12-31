@@ -2,8 +2,10 @@ use core::str;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::{
+    borrow::Cow,
     env::{self, VarError},
     fs::{File, OpenOptions},
+    ops::Deref,
     path::Path,
     process::{Output, Stdio},
     string::FromUtf8Error,
@@ -257,7 +259,7 @@ fn parse(input: &str) -> ShellExec {
     }) {
         if redirection_type == "1>" || redirection_type == ">" {
             if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
-                let command = &left_half[..left_half.len()];
+                let command: &[Cow<'_, str>] = &left_half[..left_half.len()];
                 let file = &right_half[1..];
 
                 let parsed_command = parse_command(command);
@@ -305,27 +307,99 @@ fn parse(input: &str) -> ShellExec {
     }
 }
 
-fn parse_command(command: &[String]) -> Command {
+fn parse_command(command: &[Cow<'_, str>]) -> Command {
     if let Some((head, tail)) = command.split_first() {
-        match head.as_str() {
+        match head.deref() {
             "echo" => Command::Echo(tail.join(" ")),
             "exit" => Command::Exit(tail.join(" ")),
             "type" => Command::Type(tail.join(" ")),
             "pwd" => Command::Pwd,
             "cd" => Command::Cd(tail.join(" ")),
-            c => Command::SysProgram(c.to_owned(), tail.to_owned()),
+            c => Command::SysProgram(c.to_owned(), tail.iter().map(|s| s.to_string()).collect()),
         }
     } else {
         Command::Empty
     }
 }
 
-fn tokenize(input: &str) -> Vec<String> {
+// fn tokenize(input: &str) -> Vec<String> {
+//     let mut tokens = Vec::new();
+//     let mut current_token = String::new();
+//     let mut in_single_quote = false;
+//     let mut in_double_quote = false;
+//     let mut in_escape = false;
+
+//     for (i, c) in input.chars().enumerate() {
+//         match c {
+//             '\\' if in_escape => {
+//                 current_token.push(c);
+//                 in_escape = false;
+//             }
+//             '\\' if !in_single_quote && !in_double_quote => in_escape = true,
+//             '\\' if in_double_quote => {
+//                 if let Some(next_char) = input.chars().nth(i + 1) {
+//                     if next_char == '$'
+//                         || next_char == '\\'
+//                         || next_char == '"'
+//                         || next_char == '\n'
+//                     {
+//                         in_escape = true;
+//                     } else {
+//                         current_token.push(c);
+//                     }
+//                 }
+//             }
+//             '\'' if in_escape => {
+//                 current_token.push(c);
+//                 in_escape = false;
+//             }
+//             '\'' if in_single_quote => {
+//                 in_single_quote = false;
+//             }
+//             '\'' if !in_double_quote => in_single_quote = true,
+//             '"' if in_escape => {
+//                 current_token.push(c);
+//                 in_escape = false;
+//             }
+//             '"' if in_double_quote => {
+//                 in_double_quote = false;
+//             }
+//             '"' if !in_single_quote => in_double_quote = true,
+//             ' ' | '\t' if in_escape => {
+//                 current_token.push(c);
+//                 in_escape = false;
+//             }
+//             ' ' | '\t' if !in_single_quote && !in_double_quote => {
+//                 if !current_token.is_empty() {
+//                     tokens.push(current_token.clone());
+//                     current_token.clear();
+//                 }
+//             }
+//             ' ' | '\t' => current_token.push(c),
+//             '\n' if in_escape => in_escape = false,
+//             _ => {
+//                 current_token.push(c);
+//                 in_escape = false;
+//             }
+//         }
+//     }
+
+//     // Don't forget to add the last word if there is one
+//     if !current_token.is_empty() {
+//         tokens.push(current_token);
+//     }
+
+//     tokens
+// }
+
+fn tokenize(input: &str) -> Vec<Cow<'_, str>> {
     let mut tokens = Vec::new();
     let mut current_token = String::new();
     let mut in_single_quote = false;
     let mut in_double_quote = false;
     let mut in_escape = false;
+    let mut current_token_start = 0;
+    let mut current_token_end = current_token_start;
 
     for (i, c) in input.chars().enumerate() {
         match c {
@@ -333,7 +407,12 @@ fn tokenize(input: &str) -> Vec<String> {
                 current_token.push(c);
                 in_escape = false;
             }
-            '\\' if !in_single_quote && !in_double_quote => in_escape = true,
+            '\\' if !in_single_quote && !in_double_quote => {
+                if current_token.is_empty() && current_token_end > current_token_start {
+                    current_token.push_str(&input[current_token_start..current_token_end]);
+                }
+                in_escape = true
+            }
             '\\' if in_double_quote => {
                 if let Some(next_char) = input.chars().nth(i + 1) {
                     if next_char == '$'
@@ -341,9 +420,12 @@ fn tokenize(input: &str) -> Vec<String> {
                         || next_char == '"'
                         || next_char == '\n'
                     {
+                        if current_token.is_empty() && current_token_end > current_token_start {
+                            current_token.push_str(&input[current_token_start..current_token_end]);
+                        }
                         in_escape = true;
                     } else {
-                        current_token.push(c);
+                        current_token_end = i + c.len_utf8();
                     }
                 }
             }
@@ -353,38 +435,118 @@ fn tokenize(input: &str) -> Vec<String> {
             }
             '\'' if in_single_quote => {
                 in_single_quote = false;
+
+                if current_token.is_empty() {
+                    if let Some(prev_char) = input.chars().nth(i - 1) {
+                        if prev_char == '\'' {
+                            current_token_start = i + c.len_utf8();
+                        } else if let Some(next_char) = input.chars().nth(i + 1) {
+                            if next_char.is_ascii_whitespace() {
+                                current_token_end = i;
+                            } else if current_token.is_empty()
+                                && current_token_end > current_token_start
+                            {
+                                current_token
+                                    .push_str(&input[current_token_start..current_token_end]);
+                            }
+                        }
+                    }
+                }
             }
-            '\'' if !in_double_quote => in_single_quote = true,
+            '\'' if !in_double_quote => {
+                in_single_quote = true;
+
+                if i == 0 {
+                    current_token_start = i + c.len_utf8();
+                } else if let Some(prev_char) = input.chars().nth(i - 1) {
+                    if !prev_char.is_ascii_whitespace() {
+                        if current_token.is_empty() && i > current_token_start {
+                            current_token.push_str(&input[current_token_start..i]);
+                        }
+                    } else {
+                        current_token_start = i + c.len_utf8();
+                    }
+                }
+            }
             '"' if in_escape => {
                 current_token.push(c);
                 in_escape = false;
             }
             '"' if in_double_quote => {
                 in_double_quote = false;
+                if current_token.is_empty() {
+                    if let Some(prev_char) = input.chars().nth(i - 1) {
+                        if prev_char == '"' {
+                            current_token_start = i + c.len_utf8();
+                        } else if let Some(next_char) = input.chars().nth(i + 1) {
+                            if next_char.is_ascii_whitespace() {
+                                current_token_end = i;
+                            } else if current_token.is_empty()
+                                && current_token_end > current_token_start
+                            {
+                                current_token
+                                    .push_str(&input[current_token_start..current_token_end]);
+                            }
+                        }
+                    }
+                }
             }
-            '"' if !in_single_quote => in_double_quote = true,
+            '"' if !in_single_quote => {
+                in_double_quote = true;
+
+                if i == 0 {
+                    current_token_start = i + c.len_utf8();
+                } else if let Some(prev_char) = input.chars().nth(i - 1) {
+                    if !prev_char.is_ascii_whitespace() {
+                        if current_token.is_empty() && i > current_token_start {
+                            current_token.push_str(&input[current_token_start..i]);
+                        }
+                    } else {
+                        current_token_start = i + c.len_utf8();
+                    }
+                }
+            }
             ' ' | '\t' if in_escape => {
                 current_token.push(c);
                 in_escape = false;
             }
             ' ' | '\t' if !in_single_quote && !in_double_quote => {
                 if !current_token.is_empty() {
-                    tokens.push(current_token.clone());
+                    tokens.push(current_token.clone().into());
                     current_token.clear();
+                } else if current_token_end > current_token_start {
+                    tokens.push(Cow::Borrowed(
+                        &input[current_token_start..current_token_end],
+                    ));
+                }
+                current_token_start = i + c.len_utf8();
+                current_token_end = current_token_start;
+            }
+            ' ' | '\t' => {
+                if !current_token.is_empty() {
+                    current_token.push(c)
+                } else {
+                    current_token_end = i + c.len_utf8();
                 }
             }
-            ' ' | '\t' => current_token.push(c),
             '\n' if in_escape => in_escape = false,
             _ => {
-                current_token.push(c);
                 in_escape = false;
+                if !current_token.is_empty() {
+                    current_token.push(c);
+                } else {
+                    current_token_end = i + c.len_utf8();
+                }
             }
         }
     }
 
-    // Don't forget to add the last word if there is one
     if !current_token.is_empty() {
-        tokens.push(current_token);
+        tokens.push(current_token.into());
+    } else if current_token_start < current_token_end {
+        tokens.push(Cow::Borrowed(
+            &input[current_token_start..current_token_end],
+        ));
     }
 
     tokens
@@ -447,16 +609,27 @@ mod tests {
 
     #[test]
     fn tokenize_should_split_on_whitespace() {
-        let result = tokenize("echo foo     bar asd");
-        assert_eq!(result, vec!["echo", "foo", "bar", "asd"]);
+        let test_cases = vec![
+            ("echo foo     bar asd", vec!["echo", "foo", "bar", "asd"]),
+            ("exit 0", vec!["exit", "0"]),
+        ];
+
+        for (test_case, expected_result) in test_cases {
+            assert_eq!(tokenize(test_case), expected_result);
+        }
     }
 
     #[test]
     fn tokenize_should_preserve_all_characters_in_single_quotes() {
         let test_cases = vec![
+            ("echo foo''bar asd", vec!["echo", "foobar", "asd"]),
+            ("echo foo'asd'bar asd", vec!["echo", "fooasdbar", "asd"]),
+            ("echo ''foobar asd", vec!["echo", "foobar", "asd"]),
+            ("echo foobar'' asd", vec!["echo", "foobar", "asd"]),
+            ("echo 'foo'bar asd", vec!["echo", "foobar", "asd"]),
             (
-                "echo 'foo                  bar'",
-                vec!["echo", "foo                  bar"],
+                "echo 'foo                  bar' asd",
+                vec!["echo", "foo                  bar", "asd"],
             ),
             (
                 "cat '/tmp/file name' '/tmp/file name with spaces'",
@@ -476,6 +649,14 @@ mod tests {
     fn tokenize_should_preserve_most_characters_in_double_quotes_except_backslash_in_cases_followed_by_speciacial_character(
     ) {
         let test_cases = vec![
+            (r#"echo foo""bar asd"#, vec!["echo", "foobar", "asd"]),
+            (r#"echo foo"asd"bar asd"#, vec!["echo", "fooasdbar", "asd"]),
+            (r#"echo ""foobar asd"#, vec!["echo", "foobar", "asd"]),
+            (r#"echo foobar"" asd"#, vec!["echo", "foobar", "asd"]),
+            (
+                r#"cat "/tmp/"file\name"" "/tmp/"file name"""#,
+                vec!["cat", "/tmp/filename", "/tmp/file", "name"],
+            ),
             (r#"echo "/""#, vec!["echo", "/"]),
             (r#"echo "foo"bar"#, vec!["echo", "foobar"]),
             (
@@ -506,10 +687,6 @@ mod tests {
             (
                 r#"echo "hello\"insidequotes"script\""#,
                 vec!["echo", r#"hello"insidequotesscript""#],
-            ),
-            (
-                r#"cat "/tmp/"file\name"" "/tmp/"file name"""#,
-                vec!["cat", "/tmp/filename", "/tmp/file", "name"],
             ),
             (
                 r#""exe with 'single quotes'""#,
