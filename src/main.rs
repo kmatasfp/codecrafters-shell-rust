@@ -13,22 +13,22 @@ use std::{
 use std::{fs, path::PathBuf};
 
 #[derive(Debug, PartialEq, Eq)]
-enum ShellExec {
-    PrintToStd(Command),
-    RedirectedStdOut(Command, PathBuf),
-    RedirectedStdErr(Command, PathBuf),
-    RedirectedStdOutAppend(Command, PathBuf),
-    RedirectedStdErrAppend(Command, PathBuf),
+enum ShellExec<'a> {
+    PrintToStd(Command<'a>),
+    RedirectedStdOut(Command<'a>, PathBuf),
+    RedirectedStdErr(Command<'a>, PathBuf),
+    RedirectedStdOutAppend(Command<'a>, PathBuf),
+    RedirectedStdErrAppend(Command<'a>, PathBuf),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum Command {
+enum Command<'a> {
     Exit(String),
     Echo(String),
     Type(String),
     Pwd,
     Cd(String),
-    SysProgram(String, Vec<String>),
+    SysProgram(Cow<'a, str>, Vec<Cow<'a, str>>),
     Empty,
     Invalid,
 }
@@ -259,7 +259,7 @@ fn parse(input: &str) -> ShellExec {
     }) {
         if redirection_type == "1>" || redirection_type == ">" {
             if let Some((left_half, right_half)) = tokens.split_at_checked(split_point) {
-                let command: &[Cow<'_, str>] = &left_half[..left_half.len()];
+                let command = &left_half[..left_half.len()];
                 let file = &right_half[1..];
 
                 let parsed_command = parse_command(command);
@@ -307,7 +307,7 @@ fn parse(input: &str) -> ShellExec {
     }
 }
 
-fn parse_command(command: &[Cow<'_, str>]) -> Command {
+fn parse_command<'a>(command: &[Cow<'a, str>]) -> Command<'a> {
     if let Some((head, tail)) = command.split_first() {
         match head.deref() {
             "echo" => Command::Echo(tail.join(" ")),
@@ -315,82 +315,12 @@ fn parse_command(command: &[Cow<'_, str>]) -> Command {
             "type" => Command::Type(tail.join(" ")),
             "pwd" => Command::Pwd,
             "cd" => Command::Cd(tail.join(" ")),
-            c => Command::SysProgram(c.to_owned(), tail.iter().map(|s| s.to_string()).collect()),
+            _ => Command::SysProgram(head.clone(), tail.to_vec()),
         }
     } else {
         Command::Empty
     }
 }
-
-// fn tokenize(input: &str) -> Vec<String> {
-//     let mut tokens = Vec::new();
-//     let mut current_token = String::new();
-//     let mut in_single_quote = false;
-//     let mut in_double_quote = false;
-//     let mut in_escape = false;
-
-//     for (i, c) in input.chars().enumerate() {
-//         match c {
-//             '\\' if in_escape => {
-//                 current_token.push(c);
-//                 in_escape = false;
-//             }
-//             '\\' if !in_single_quote && !in_double_quote => in_escape = true,
-//             '\\' if in_double_quote => {
-//                 if let Some(next_char) = input.chars().nth(i + 1) {
-//                     if next_char == '$'
-//                         || next_char == '\\'
-//                         || next_char == '"'
-//                         || next_char == '\n'
-//                     {
-//                         in_escape = true;
-//                     } else {
-//                         current_token.push(c);
-//                     }
-//                 }
-//             }
-//             '\'' if in_escape => {
-//                 current_token.push(c);
-//                 in_escape = false;
-//             }
-//             '\'' if in_single_quote => {
-//                 in_single_quote = false;
-//             }
-//             '\'' if !in_double_quote => in_single_quote = true,
-//             '"' if in_escape => {
-//                 current_token.push(c);
-//                 in_escape = false;
-//             }
-//             '"' if in_double_quote => {
-//                 in_double_quote = false;
-//             }
-//             '"' if !in_single_quote => in_double_quote = true,
-//             ' ' | '\t' if in_escape => {
-//                 current_token.push(c);
-//                 in_escape = false;
-//             }
-//             ' ' | '\t' if !in_single_quote && !in_double_quote => {
-//                 if !current_token.is_empty() {
-//                     tokens.push(current_token.clone());
-//                     current_token.clear();
-//                 }
-//             }
-//             ' ' | '\t' => current_token.push(c),
-//             '\n' if in_escape => in_escape = false,
-//             _ => {
-//                 current_token.push(c);
-//                 in_escape = false;
-//             }
-//         }
-//     }
-
-//     // Don't forget to add the last word if there is one
-//     if !current_token.is_empty() {
-//         tokens.push(current_token);
-//     }
-
-//     tokens
-// }
 
 fn tokenize(input: &str) -> Vec<Cow<'_, str>> {
     let mut tokens = Vec::new();
@@ -559,9 +489,9 @@ fn find_executable_on_path(path: &str, executable: &str) -> Result<Option<PathBu
         .find(|path| fs::metadata(path).is_ok()))
 }
 
-fn run_executable_with_args(program: &Path, args: &[String]) -> io::Result<Output> {
+fn run_executable_with_args(program: &Path, args: &[Cow<'_, str>]) -> io::Result<Output> {
     std::process::Command::new(program)
-        .args(args)
+        .args(args.iter().map(|arg| arg.as_ref()))
         .stdout(Stdio::piped())
         .output()
 }
@@ -732,14 +662,20 @@ mod tests {
             (
                 "ls /tmp/baz > /tmp/foo/baz.md",
                 ShellExec::RedirectedStdOut(
-                    Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                    Command::SysProgram(
+                        String::from("ls").into(),
+                        vec![String::from("/tmp/baz").into()],
+                    ),
                     PathBuf::from("/tmp/foo/baz.md"),
                 ),
             ),
             (
                 "ls /tmp/baz 1> /tmp/foo/baz.md",
                 ShellExec::RedirectedStdOut(
-                    Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                    Command::SysProgram(
+                        String::from("ls").into(),
+                        vec![String::from("/tmp/baz").into()],
+                    ),
                     PathBuf::from("/tmp/foo/baz.md"),
                 ),
             ),
@@ -756,7 +692,10 @@ mod tests {
         let test_cases = vec![(
             "ls /tmp/baz 2> /tmp/foo/baz.md",
             ShellExec::RedirectedStdErr(
-                Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                Command::SysProgram(
+                    String::from("ls").into(),
+                    vec![String::from("/tmp/baz").into()],
+                ),
                 PathBuf::from("/tmp/foo/baz.md"),
             ),
         )];
@@ -773,14 +712,20 @@ mod tests {
             (
                 "ls /tmp/baz >> /tmp/foo/baz.md",
                 ShellExec::RedirectedStdOutAppend(
-                    Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                    Command::SysProgram(
+                        String::from("ls").into(),
+                        vec![String::from("/tmp/baz").into()],
+                    ),
                     PathBuf::from("/tmp/foo/baz.md"),
                 ),
             ),
             (
                 "ls /tmp/baz 1>> /tmp/foo/baz.md",
                 ShellExec::RedirectedStdOutAppend(
-                    Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                    Command::SysProgram(
+                        String::from("ls").into(),
+                        vec![String::from("/tmp/baz").into()],
+                    ),
                     PathBuf::from("/tmp/foo/baz.md"),
                 ),
             ),
@@ -797,7 +742,10 @@ mod tests {
         let test_cases = vec![(
             "ls /tmp/baz 2>> /tmp/foo/baz.md",
             ShellExec::RedirectedStdErrAppend(
-                Command::SysProgram(String::from("ls"), vec![String::from("/tmp/baz")]),
+                Command::SysProgram(
+                    String::from("ls").into(),
+                    vec![String::from("/tmp/baz").into()],
+                ),
                 PathBuf::from("/tmp/foo/baz.md"),
             ),
         )];
