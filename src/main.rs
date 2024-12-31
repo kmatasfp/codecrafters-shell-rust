@@ -260,9 +260,9 @@ fn parse(input: &str) -> ShellExec {
                 let command = &left_half[..left_half.len()];
                 let file = &right_half[1..];
 
-                let command = redirected_command(command.to_vec());
+                let parsed_command = parse_command(command);
 
-                ShellExec::RedirectedStdOut(command, PathBuf::from(file.join(" ")))
+                ShellExec::RedirectedStdOut(parsed_command, PathBuf::from(file.join(" ")))
             } else {
                 ShellExec::PrintToStd(Command::Invalid)
             }
@@ -271,9 +271,9 @@ fn parse(input: &str) -> ShellExec {
                 let command = &left_half[..left_half.len()];
                 let file = &right_half[1..];
 
-                let command = redirected_command(command.to_vec());
+                let parsed_command = parse_command(command);
 
-                ShellExec::RedirectedStdOutAppend(command, PathBuf::from(file.join(" ")))
+                ShellExec::RedirectedStdOutAppend(parsed_command, PathBuf::from(file.join(" ")))
             } else {
                 ShellExec::PrintToStd(Command::Invalid)
             }
@@ -282,9 +282,9 @@ fn parse(input: &str) -> ShellExec {
                 let command = &left_half[..left_half.len()];
                 let file = &right_half[1..];
 
-                let command = redirected_command(command.to_vec());
+                let parsed_command = parse_command(command);
 
-                ShellExec::RedirectedStdErr(command, PathBuf::from(file.join(" ")))
+                ShellExec::RedirectedStdErr(parsed_command, PathBuf::from(file.join(" ")))
             } else {
                 ShellExec::PrintToStd(Command::Invalid)
             }
@@ -292,29 +292,20 @@ fn parse(input: &str) -> ShellExec {
             let command = &left_half[..left_half.len()];
             let file = &right_half[1..];
 
-            let command = redirected_command(command.to_vec());
+            let parsed_command = parse_command(command);
 
-            ShellExec::RedirectedStdErrAppend(command, PathBuf::from(file.join(" ")))
+            ShellExec::RedirectedStdErrAppend(parsed_command, PathBuf::from(file.join(" ")))
         } else {
             ShellExec::PrintToStd(Command::Invalid)
         }
-    } else if let Some((head, tail)) = tokens.split_first() {
-        let command = match head.as_str() {
-            "echo" => Command::Echo(tail.join(" ")),
-            "exit" => Command::Exit(tail.join(" ")),
-            "type" => Command::Type(tail.join(" ")),
-            "pwd" => Command::Pwd,
-            "cd" => Command::Cd(tail.join(" ")),
-            c => Command::SysProgram(c.to_owned(), tail.to_vec()),
-        };
-
-        ShellExec::PrintToStd(command)
     } else {
-        ShellExec::PrintToStd(Command::Empty)
+        let parsed_command = parse_command(tokens.as_slice());
+
+        ShellExec::PrintToStd(parsed_command)
     }
 }
 
-fn redirected_command(command: Vec<String>) -> Command {
+fn parse_command(command: &[String]) -> Command {
     if let Some((head, tail)) = command.split_first() {
         match head.as_str() {
             "echo" => Command::Echo(tail.join(" ")),
@@ -322,10 +313,10 @@ fn redirected_command(command: Vec<String>) -> Command {
             "type" => Command::Type(tail.join(" ")),
             "pwd" => Command::Pwd,
             "cd" => Command::Cd(tail.join(" ")),
-            c => Command::SysProgram(c.to_owned(), tail.to_vec()),
+            c => Command::SysProgram(c.to_owned(), tail.to_owned()),
         }
     } else {
-        Command::Invalid
+        Command::Empty
     }
 }
 
@@ -406,7 +397,7 @@ fn find_executable_on_path(path: &str, executable: &str) -> Result<Option<PathBu
         .find(|path| fs::metadata(path).is_ok()))
 }
 
-fn run_executable_with_args(program: &PathBuf, args: &[String]) -> io::Result<Output> {
+fn run_executable_with_args(program: &Path, args: &[String]) -> io::Result<Output> {
     std::process::Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
