@@ -331,6 +331,43 @@ fn tokenize(input: &str) -> Vec<Cow<'_, str>> {
     let mut current_token_start = 0;
     let mut current_token_end = current_token_start;
 
+    let handle_quote_open =
+        |c: char, i: usize, current_token_start: &mut usize, current_token: &mut String| {
+            if i == 0 {
+                *current_token_start = i + c.len_utf8();
+            } else if let Some(prev_char) = input.chars().nth(i - 1) {
+                if !prev_char.is_ascii_whitespace() {
+                    if current_token.is_empty() && i > *current_token_start {
+                        current_token.push_str(&input[*current_token_start..i]);
+                    }
+                } else {
+                    *current_token_start = i + c.len_utf8();
+                }
+            }
+        };
+
+    let handle_quote_close = |c: char,
+                              i: usize,
+                              current_token_start: &mut usize,
+                              current_token_end: &mut usize,
+                              current_token: &mut String| {
+        if current_token.is_empty() {
+            if let Some(prev_char) = input.chars().nth(i - 1) {
+                if prev_char == c {
+                    // emtpy quotes
+                    *current_token_start = i + c.len_utf8();
+                } else if let Some(next_char) = input.chars().nth(i + 1) {
+                    if next_char.is_ascii_whitespace() {
+                        *current_token_end = i;
+                    } else if current_token.is_empty() && *current_token_end > *current_token_start
+                    {
+                        current_token.push_str(&input[*current_token_start..*current_token_end]);
+                    }
+                }
+            }
+        }
+    };
+
     for (i, c) in input.chars().enumerate() {
         match c {
             '\\' if in_escape => {
@@ -366,37 +403,18 @@ fn tokenize(input: &str) -> Vec<Cow<'_, str>> {
             '\'' if in_single_quote => {
                 in_single_quote = false;
 
-                if current_token.is_empty() {
-                    if let Some(prev_char) = input.chars().nth(i - 1) {
-                        if prev_char == '\'' {
-                            current_token_start = i + c.len_utf8();
-                        } else if let Some(next_char) = input.chars().nth(i + 1) {
-                            if next_char.is_ascii_whitespace() {
-                                current_token_end = i;
-                            } else if current_token.is_empty()
-                                && current_token_end > current_token_start
-                            {
-                                current_token
-                                    .push_str(&input[current_token_start..current_token_end]);
-                            }
-                        }
-                    }
-                }
+                handle_quote_close(
+                    c,
+                    i,
+                    &mut current_token_start,
+                    &mut current_token_end,
+                    &mut current_token,
+                );
             }
             '\'' if !in_double_quote => {
                 in_single_quote = true;
 
-                if i == 0 {
-                    current_token_start = i + c.len_utf8();
-                } else if let Some(prev_char) = input.chars().nth(i - 1) {
-                    if !prev_char.is_ascii_whitespace() {
-                        if current_token.is_empty() && i > current_token_start {
-                            current_token.push_str(&input[current_token_start..i]);
-                        }
-                    } else {
-                        current_token_start = i + c.len_utf8();
-                    }
-                }
+                handle_quote_open(c, i, &mut current_token_start, &mut current_token);
             }
             '"' if in_escape => {
                 current_token.push(c);
@@ -404,37 +422,18 @@ fn tokenize(input: &str) -> Vec<Cow<'_, str>> {
             }
             '"' if in_double_quote => {
                 in_double_quote = false;
-                if current_token.is_empty() {
-                    if let Some(prev_char) = input.chars().nth(i - 1) {
-                        if prev_char == '"' {
-                            current_token_start = i + c.len_utf8();
-                        } else if let Some(next_char) = input.chars().nth(i + 1) {
-                            if next_char.is_ascii_whitespace() {
-                                current_token_end = i;
-                            } else if current_token.is_empty()
-                                && current_token_end > current_token_start
-                            {
-                                current_token
-                                    .push_str(&input[current_token_start..current_token_end]);
-                            }
-                        }
-                    }
-                }
+                handle_quote_close(
+                    c,
+                    i,
+                    &mut current_token_start,
+                    &mut current_token_end,
+                    &mut current_token,
+                );
             }
             '"' if !in_single_quote => {
                 in_double_quote = true;
 
-                if i == 0 {
-                    current_token_start = i + c.len_utf8();
-                } else if let Some(prev_char) = input.chars().nth(i - 1) {
-                    if !prev_char.is_ascii_whitespace() {
-                        if current_token.is_empty() && i > current_token_start {
-                            current_token.push_str(&input[current_token_start..i]);
-                        }
-                    } else {
-                        current_token_start = i + c.len_utf8();
-                    }
-                }
+                handle_quote_open(c, i, &mut current_token_start, &mut current_token);
             }
             ' ' | '\t' if in_escape => {
                 current_token.push(c);
